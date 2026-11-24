@@ -24,6 +24,13 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     ai_model: str = "claude-opus-5-5"
 
+    # Comma separated origins allowed to call the API from a browser (the React dev server).
+    cors_origins: str = "http://localhost:5173"
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
 
 @lru_cache
 def get_settings() -> Settings:
