@@ -25,6 +25,7 @@ class Classification(str, Enum):
     SUBSTANTIVE = "substantive"   # changes a rule, amount, duty, authority...
     WORDING = "wording"           # same meaning, different phrasing
     UNCLASSIFIED = "unclassified" # rule-based mode cannot tell
+    MOVED = "moved"               # same text, only its place changed
 
 
 @dataclass
@@ -54,6 +55,9 @@ class RuleBasedAnalyzer:
             return Analysis(summary, [], [], "rules")
 
         counts = Counter(c.kind for c in changes)
+        if counts[ChangeKind.MOVED] == len(changes):
+            return Analysis(f"לא נמצאו שינויים בתוכן. {len(changes)} פסקאות הועברו למקום אחר במסמך.",
+                            [Classification.MOVED] * len(changes), [""] * len(changes), "rules")
         parts = []
         if counts[ChangeKind.MODIFIED]:
             parts.append(f"{counts[ChangeKind.MODIFIED]} סעיפים שונו")
@@ -61,12 +65,15 @@ class RuleBasedAnalyzer:
             parts.append(f"{counts[ChangeKind.ADDED]} נוספו")
         if counts[ChangeKind.REMOVED]:
             parts.append(f"{counts[ChangeKind.REMOVED]} הוסרו")
-        sections = _unique_sections(changes)
+        sections = _unique_sections([c for c in changes if c.kind != ChangeKind.MOVED])
         summary = ", ".join(parts) + "."
         if sections:
             summary += " בפרקים: " + ", ".join(sections[:3]) + ("..." if len(sections) > 3 else "")
-        return Analysis(summary, [Classification.UNCLASSIFIED] * len(changes),
-                        [""] * len(changes), "rules")
+        if counts[ChangeKind.MOVED]:
+            summary += f" בנוסף {counts[ChangeKind.MOVED]} פסקאות הועברו ללא שינוי."
+        labels = [Classification.MOVED if c.kind == ChangeKind.MOVED else Classification.UNCLASSIFIED
+                  for c in changes]
+        return Analysis(summary, labels, [""] * len(changes), "rules")
 
 
 def _unique_sections(changes: list[Change]) -> list[str]:
@@ -105,7 +112,8 @@ class ClaudeAnalyzer:
             self.client = anthropic.Anthropic(api_key=api_key)
 
     def analyze(self, instruction_name: str, diff: DiffResult) -> Analysis:
-        if not diff.changes:  # nothing to ask the model about
+        content = [c for c in diff.changes if c.kind != ChangeKind.MOVED]
+        if not content:  # nothing to ask the model about (no changes, or only moves)
             return self.fallback.analyze(instruction_name, diff)
         try:
             return self._call_model(instruction_name, diff)
@@ -117,7 +125,9 @@ class ClaudeAnalyzer:
             return result
 
     def _call_model(self, instruction_name: str, diff: DiffResult) -> Analysis:
-        n = len(diff.changes)
+        # Moved-but-unchanged paragraphs are not sent: there is nothing to interpret.
+        content = [c for c in diff.changes if c.kind != ChangeKind.MOVED]
+        n = len(content)
         schema = {
             "type": "object",
             "properties": {
@@ -143,7 +153,7 @@ class ClaudeAnalyzer:
             model=self.model,
             max_tokens=16000,
             system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": _render_changes(instruction_name, diff.changes)}],
+            messages=[{"role": "user", "content": _render_changes(instruction_name, content)}],
             output_config={"effort": "low", "format": {"type": "json_schema", "schema": schema}},
         )
         if response.stop_reason == "refusal":
@@ -153,7 +163,13 @@ class ClaudeAnalyzer:
 
         by_index = {item["index"]: item for item in data["changes"]}
         classifications, explanations = [], []
-        for i in range(1, n + 1):
+        i = 0
+        for change in diff.changes:   # map answers back, keeping the original order
+            if change.kind == ChangeKind.MOVED:
+                classifications.append(Classification.MOVED)
+                explanations.append("")
+                continue
+            i += 1
             item = by_index.get(i)
             if item is None:  # model skipped one: be conservative
                 classifications.append(Classification.SUBSTANTIVE)

@@ -68,6 +68,7 @@ class Change(Base):
     position: Mapped[int] = mapped_column(Integer)
     kind: Mapped[str] = mapped_column(String(20))
     heading: Mapped[str] = mapped_column(String(500), default="")
+    moved_from: Mapped[str | None] = mapped_column(String(500), nullable=True)
     old_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     new_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     segments: Mapped[list] = mapped_column(JSON, default=list)   # word-level diff

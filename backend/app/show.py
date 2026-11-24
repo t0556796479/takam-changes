@@ -11,7 +11,7 @@ import sys
 from app.db import SessionLocal
 from app.models import Instruction
 
-LABELS = {"substantive": "מהותי", "wording": "ניסוחי", "unclassified": "לא סווג"}
+LABELS = {"substantive": "מהותי", "wording": "ניסוחי", "unclassified": "לא סווג", "moved": "הועבר"}
 
 
 def _render(segments: list[dict]) -> str:
@@ -49,14 +49,21 @@ def main(argv: list[str]) -> int:
             print(f"תמצית: {cs.summary}")
             if cs.cosmetic_only_count:
                 print(f"(בנוסף {cs.cosmetic_only_count} שינויי פיסוק/עיצוב שסוננו)")
-            for c in cs.changes:
+            moved = [c for c in cs.changes if c.kind == "moved"]
+            for c in (c for c in cs.changes if c.kind != "moved"):
                 print(f"\n- [{LABELS.get(c.classification, c.classification)}] {c.kind} | {c.heading}")
                 if c.kind == "modified":
                     print("  " + _render(c.segments))
                 else:
                     print("  " + (c.new_text or c.old_text or ""))
+                if c.moved_from and c.moved_from != c.heading:
+                    print(f"  (הועבר מ: {c.moved_from})")
                 if c.explanation:
                     print(f"  הסבר: {c.explanation}")
+            if moved:
+                print(f"\n- {len(moved)} פסקאות הועברו ללא שינוי בתוכן:")
+                for c in moved:
+                    print(f"  {c.moved_from} -> {c.heading}: {(c.new_text or '')[:60]}...")
             print()
     return 0
 

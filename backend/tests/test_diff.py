@@ -48,3 +48,22 @@ def test_empty_editions():
 
 def test_word_diff_of_equal_text_is_single_equal_segment():
     assert [(s.op, s.text) for s in word_diff("אותו טקסט", "אותו טקסט")] == [("equal", "אותו טקסט")]
+
+
+def test_paragraph_that_changed_place_is_moved_not_removed_and_added():
+    moved = "נוהל הגשת פנייה לוועדת הפטור ואופן המענה."
+    old = [b("מבוא.", "מבוא"), b(moved, "נספח ג"), b("ב.", "ב"), b("ג.", "ג")]
+    new = [b("מבוא.", "מבוא"), b("ב.", "ב"), b("ג.", "ג"), b(moved, "נספח ה")]
+    [change] = diff_blocks(old, new).changes
+    assert change.kind == ChangeKind.MOVED
+    assert (change.moved_from, change.heading) == ("נספח ג", "נספח ה")
+
+
+def test_moved_and_slightly_edited_is_modified_with_origin():
+    old = [b("א."), b("הוועדה תדרוש מהמציעים להגיש ערבות דיגיטלית בהתאם למסמכי המכרז.", "נספח ב"),
+           b("ב."), b("ג.")]
+    new = [b("א."), b("ב."), b("ג."),
+           b("הוועדה תדרוש מהמציעים להגיש ערבות דיגיטלית בהתאם למסמכי המכרז החדשים.", "נספח ד")]
+    [change] = diff_blocks(old, new).changes
+    assert change.kind == ChangeKind.MODIFIED and change.moved_from == "נספח ב"
+    assert any(s.op == "insert" and "החדשים" in s.text for s in change.segments)

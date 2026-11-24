@@ -16,12 +16,16 @@ from app.core.normalize import normalize
 
 # Below this similarity two paragraphs are treated as remove + add, not an edit.
 MODIFIED_SIMILARITY = 0.5
+# A removed and an added paragraph this similar, anywhere in the document, are
+# treated as one paragraph that moved (and maybe was slightly edited).
+MOVED_SIMILARITY = 0.8
 
 
 class ChangeKind(str, Enum):
     ADDED = "added"
     REMOVED = "removed"
     MODIFIED = "modified"
+    MOVED = "moved"            # same text, different place in the document
 
 
 @dataclass(frozen=True)
@@ -38,6 +42,7 @@ class Change:
     old_text: str | None
     new_text: str | None
     segments: list[Segment] = field(default_factory=list)
+    moved_from: str | None = None   # old heading, when the paragraph changed place
 
 
 @dataclass
@@ -63,7 +68,45 @@ def diff_blocks(old: list[Block], new: list[Block]) -> DiffResult:
             changes += [_added(b) for b in new[j1:j2]]
         else:  # replace
             changes += _pair_replaced(old[i1:i2], new[j1:j2], old_norm[i1:i2], new_norm[j1:j2])
-    return DiffResult(changes=changes, cosmetic_only_count=cosmetic)
+    return DiffResult(changes=_detect_moves(changes), cosmetic_only_count=cosmetic)
+
+
+def _detect_moves(changes: list[Change]) -> list[Change]:
+    """Pair a removed paragraph with an added one elsewhere that has the same
+    (or almost the same) text: that is a move, not a delete + add.
+
+    Typical case in Takam documents: appendices that were re-ordered.
+    """
+    removed = [c for c in changes if c.kind == ChangeKind.REMOVED]
+    added = [c for c in changes if c.kind == ChangeKind.ADDED]
+    if not removed or not added:
+        return changes
+
+    added_norm = {id(a): normalize(a.new_text or "") for a in added}
+    replacement: dict[int, Change | None] = {}   # id(change) -> new change, or None to drop
+    for r in removed:
+        r_norm = normalize(r.old_text or "")
+        best, best_score = None, 0.0
+        for a in added:
+            if id(a) in replacement:
+                continue
+            score = 1.0 if added_norm[id(a)] == r_norm else \
+                SequenceMatcher(a=r_norm, b=added_norm[id(a)], autojunk=False).ratio()
+            if score > best_score:
+                best, best_score = a, score
+            if score == 1.0:
+                break
+        if best is None or best_score < MOVED_SIMILARITY:
+            continue
+        if best_score == 1.0:
+            merged = Change(ChangeKind.MOVED, best.heading, r.old_text, best.new_text,
+                            moved_from=r.heading)
+        else:
+            merged = Change(ChangeKind.MODIFIED, best.heading, r.old_text, best.new_text,
+                            word_diff(r.old_text or "", best.new_text or ""), moved_from=r.heading)
+        replacement[id(r)] = None        # drop the "removed" entry
+        replacement[id(best)] = merged   # the "added" entry becomes the move/edit
+    return [replacement.get(id(c), c) for c in changes if replacement.get(id(c), c) is not None]
 
 
 def _pair_replaced(old: list[Block], new: list[Block],

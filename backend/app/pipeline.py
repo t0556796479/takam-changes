@@ -71,6 +71,7 @@ def process_instruction(session: Session, entry: dict, data_dir: Path,
                 zip(diff.changes, analysis.classifications, analysis.explanations)):
             cs.changes.append(Change(
                 position=pos, kind=change.kind.value, heading=change.heading,
+                moved_from=change.moved_from,
                 old_text=change.old_text, new_text=change.new_text,
                 segments=[asdict(s) for s in change.segments],
                 classification=cls.value, explanation=expl))

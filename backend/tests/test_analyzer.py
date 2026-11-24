@@ -73,3 +73,19 @@ def test_no_changes_does_not_call_the_model():
 def test_build_analyzer_without_key_uses_rules():
     assert isinstance(build_analyzer("anthropic", "", "m"), RuleBasedAnalyzer)
     assert isinstance(build_analyzer("none", "key", "m"), RuleBasedAnalyzer)
+
+
+def test_only_moves_means_no_content_change_and_no_ai_call():
+    moved = [Change(ChangeKind.MOVED, "נספח ה", "טקסט", "טקסט", moved_from="נספח ג")]
+    client = FakeClient({"summary": "", "changes": []})
+    a = ClaudeAnalyzer("k", "m", client=client).analyze("ה", DiffResult(moved, 0))
+    assert client.calls == 0
+    assert a.classifications == [Classification.MOVED] and "הועברו" in a.summary
+
+
+def test_moves_are_not_sent_to_ai_and_labels_keep_order():
+    changes = [Change(ChangeKind.MOVED, "נ", "x", "x", moved_from="מ"),
+               Change(ChangeKind.MODIFIED, "פרק", "ישן", "חדש")]
+    payload = {"summary": "s", "changes": [{"index": 1, "classification": "wording", "explanation": ""}]}
+    a = ClaudeAnalyzer("k", "m", client=FakeClient(payload)).analyze("ה", DiffResult(changes, 0))
+    assert a.classifications == [Classification.MOVED, Classification.WORDING]
