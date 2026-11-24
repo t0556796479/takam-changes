@@ -83,3 +83,35 @@ def test_rerun_replaces_instead_of_duplicating(tmp_path):
         process_instruction(s, entry("5.5.5", [1, 2]), tmp_path, RuleBasedAnalyzer())
         s.commit()
     assert s.query(Instruction).filter_by(code="5.5.5").count() == 1
+
+
+def test_missing_file_is_skipped(tmp_path):
+    # The catalog lists v2, but the file was never downloaded.
+    make_docx(tmp_path / "raw/5.5.5/v1.docx", ["טקסט."])
+    s = session()
+    inst = process_instruction(s, entry("5.5.5", [1, 2]), tmp_path, RuleBasedAnalyzer())
+    assert [e.version for e in inst.editions] == [1] and inst.change_sets == []
+
+
+def test_empty_edition_shows_everything_as_removed(tmp_path):
+    make_docx(tmp_path / "raw/6.6.6/v1.docx", ["סעיף ראשון.", "סעיף שני."])
+    path = tmp_path / "raw/6.6.6/v2.docx"
+    docx.Document().save(path)   # a document with no paragraphs at all
+    s = session()
+    [cs] = process_instruction(s, entry("6.6.6", [1, 2]), tmp_path, RuleBasedAnalyzer()).change_sets
+    assert sorted(c.kind for c in cs.changes) == ["removed", "removed", "removed"]
+
+
+def test_heading_only_change(tmp_path):
+    # Renaming a section heading is a change the reader should see.
+    for v, title in ((1, "הנחיות לביצוע"), (2, "הנחיות לביצוע ולדיווח")):
+        path = tmp_path / f"raw/8.8.8/v{v}.docx"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        d = docx.Document()
+        d.add_heading(title, level=1)
+        d.add_paragraph("אותו תוכן.")
+        d.save(path)
+    s = session()
+    [cs] = process_instruction(s, entry("8.8.8", [1, 2]), tmp_path, RuleBasedAnalyzer()).change_sets
+    assert [c.kind for c in cs.changes] == ["modified"]
+    assert any(seg["op"] == "insert" and "ולדיווח" in seg["text"] for seg in cs.changes[0].segments)
